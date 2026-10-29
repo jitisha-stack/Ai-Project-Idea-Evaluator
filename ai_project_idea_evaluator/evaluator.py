@@ -1,6 +1,8 @@
 import os
 import json
+import streamlit as st
 from dotenv import load_dotenv
+load_dotenv()
 
 load_dotenv()
 
@@ -76,42 +78,63 @@ def evaluate_idea(idea):
             "payback": payback, "strengths": strengths, "concerns": concerns, "next_steps": next_steps,
             "build_buy_advice": advice}
 
+
+
+
 def build_ai_analysis(idea, result):
     """Optional AI layer. Rule-based results remain available if AI is not configured."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return ("AI explanation was requested, but OPENAI_API_KEY is not set. "
-                "The rule-based evaluation above still works. Add your key to .env to enable this feature.")
+    api_key = os.getenv("GROQ_API_KEY")
+
+    try:
+        api_key = api_key or st.secrets["GROQ_API_KEY"]
+    except (AttributeError, KeyError, FileNotFoundError):
+        pass
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key= api_key, 
+            base_url="https://api.groq.com/openai/v1")
+        
         payload = {"idea": idea, "rule_based_result": result,
+                   
             "instructions": ["Explain results in plain language for a student team.",
             "Do not invent market facts, quotes or performance data.",
             "Label the score as a prototype estimate, not objective truth.",
             "Give three specific questions to validate with stakeholders.",
             "Discuss privacy, security, fairness and human oversight when relevant.",
             "Keep the answer under 350 words."]}
-        response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-            input=[{"role":"system","content":"You are a cautious AI project feasibility reviewer. Distinguish facts from assumptions."},
-                   {"role":"user","content":json.dumps(payload, ensure_ascii=False)}])
-        return response.output_text
+        
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b", 
+            messages=[{"role": "system","content": ("You are a cautious AI project feasibility reviewer. ""Distinguish facts from assumptions.")
+                       },
+                       {
+                           "role": "user",
+                           "content": json.dumps(payload, ensure_ascii=False)
+                           }
+                    ],
+                    max_tokens=700,temperature=0.3)
+        return response.choices[0].message.content
     except Exception as exc:
         return ("AI explanation could not be generated. Check API key, internet connection, model access and packages. "
                 f"Rule-based results are still available. Technical detail: {type(exc).__name__}: {exc}")
 
 def generate_report_text(idea, result, ai_text=None):
     lines = ["AI PROJECT IDEA EVALUATION REPORT", "=" * 34,
+             
         f"Project: {idea.get('name','Untitled idea')}", f"Problem: {idea.get('problem','')}",
+
         f"Target users: {idea.get('users','')}", "", f"Feasibility score: {result['score']}/100",
+
         f"Recommendation: {result['verdict']}", f"Annual benefit minus initial budget: ₹{result['net_benefit']:,.0f}",
+
         f"Simple payback estimate: {result['payback']}", "", "PILLAR SCORES"]
+    
     lines += [f"- {name}: {score}/100" for name, score in result["pillar_scores"].items()]
     lines += ["", "STRENGTHS"] + [f"- {x}" for x in result["strengths"]]
     lines += ["", "CONCERNS"] + [f"- {x}" for x in result["concerns"]]
     lines += ["", "NEXT STEPS"] + [f"- {x}" for x in result["next_steps"]]
     lines += ["", "BUILD VS BUY", result["build_buy_advice"]]
+
     if ai_text: lines += ["", "AI-ASSISTED EXPLANATION", ai_text]
     lines += ["", "Disclaimer: Prototype decision-support output. Validate assumptions before real decisions."]
     return "\n".join(lines)
